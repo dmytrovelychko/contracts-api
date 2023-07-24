@@ -10,8 +10,6 @@ app.set('models', sequelize.models)
 
 
 /**
- * POST /jobs/:job_id/pay - Pay for a job, a client can only pay if his balance >= the amount to pay. The amount should be moved from the client's balance to the contractor balance.
- *
  * POST /balances/deposit/:userId - Deposits money into the the the balance of a client, a client can't deposit more than 25% his total of jobs to pay. (at the deposit moment)
  *
  * GET /admin/best-profession?start=<date>&end=<date> - Returns the profession that earned the most money (sum of jobs paid) for any contactor that worked in the query time range.
@@ -61,8 +59,6 @@ app.get('/contracts', getProfile, async (req, res) => {
     res.json(contracts)
 })
 
-
-// GET /jobs/unpaid - Get all unpaid jobs for a user (either a client or contractor), for active contracts only.
 app.get('/jobs/unpaid', getProfile, async (req, res) => {
     const {Job, Contract} = req.app.get('models')
     const currentUser = req.profile
@@ -70,10 +66,10 @@ app.get('/jobs/unpaid', getProfile, async (req, res) => {
     // TODO add pagination
     const jobs = await Job.findAll({
         where: {
-            [or]: {
-                paid: false,
-                paid: { [is]: null }
-            }
+            [or]: [
+                {paid: false},
+                {paid: {[is]: null}},
+            ]
         },
         include: {
             model: Contract,
@@ -88,5 +84,55 @@ app.get('/jobs/unpaid', getProfile, async (req, res) => {
 
     res.json(jobs)
 })
+
+// POST /jobs/:job_id/pay - Pay for a job,
+// a client can only pay if his balance >= the amount to pay.
+// The amount should be moved from the client's balance to the contractor balance.
+app.post('/jobs/:job_id/pay', getProfile, async (req, res) => {
+    const {Job, Contract} = req.app.get('models')
+    const currentUser = req.profile
+    const {job_id: jobId} = req.params
+
+    let result = null
+
+    try {
+        result = await sequelize.transaction(async t => {
+            const job = await Job.findOne({
+                where: {id: jobId},
+                include: {
+                    model: Contract,
+                    where: {
+                        ClientId: currentUser.id
+                    }
+                },
+                transaction: t,
+            })
+
+            // TODO job.paid nullable
+            if (job.paid) {
+                // TODO log
+                return true
+            }
+            // TODO I can't use currentUser.balance it is outdated data
+            if (job.price <= currentUser.balance) {
+
+            } else {
+                // HTTP ERROR
+                return false
+            }
+        })
+
+    } catch (error) {
+        // TODO handle http error and log
+    }
+
+    res.json(result)
+})
+
+/*
+Repeatbale reads is bad for payments and handling balances.
+You need to fix this do select for update. Otherwise set serializble to slowdown db
+ but insure that if read date no one will change it until you will end transaction.
+ */
 
 module.exports = app;
